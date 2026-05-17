@@ -273,6 +273,9 @@ async def cb_cancel_booking_master(callback: CallbackQuery):
         )
     except Exception:
         pass
+    # UX-3: notify waitlist clients for the freed date
+    from utils.notifications import notify_waitlist
+    await notify_waitlist(callback.bot, b["admin_id"], b["booking_date"])
     await callback.answer("❌ Запись отменена", show_alert=True)
     await cb_all_bookings(callback)
 

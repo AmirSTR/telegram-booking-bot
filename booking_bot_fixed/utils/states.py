@@ -36,6 +36,14 @@ class RescheduleStates(StatesGroup):
     choosing_time = State()
 
 
-# Fix #3: proper StatesGroup instead of raw string state
 class WaitlistStates(StatesGroup):
     choosing_service = State()
+
+
+class WaitlistDateStates(StatesGroup):
+    choosing_dates = State()
+
+
+class ProfileStates(StatesGroup):
+    editing_phone = State()
+    editing_email = State()

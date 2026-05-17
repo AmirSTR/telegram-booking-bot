@@ -63,8 +63,26 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (admin_id) REFERENCES masters(telegram_id)
             );
+
+            CREATE TABLE IF NOT EXISTS fsm_data (
+                bot_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                destiny TEXT NOT NULL DEFAULT 'fsm',
+                state TEXT,
+                data TEXT DEFAULT '{}',
+                PRIMARY KEY (bot_id, chat_id, user_id, destiny)
+            );
         """)
         await db.commit()
+
+    # Migrations: add columns that may not exist in older DBs
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("ALTER TABLE clients ADD COLUMN email TEXT")
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
 
 
 # ─── MASTERS ──────────────────────────────────────────────────────────────────
@@ -170,6 +188,17 @@ async def get_client(admin_id: int, telegram_id: int):
             return await cur.fetchone()
 
 
+async def get_client_master(telegram_id: int):
+    """Return the first master record this client is registered with."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT admin_id FROM clients WHERE telegram_id = ? LIMIT 1",
+            (telegram_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+
 async def get_all_clients(admin_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -179,20 +208,45 @@ async def get_all_clients(admin_id: int):
             return await cur.fetchall()
 
 
+async def update_client_phone(admin_id: int, telegram_id: int, phone: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE clients SET phone=? WHERE admin_id=? AND telegram_id=?",
+            (phone, admin_id, telegram_id)
+        )
+        await db.commit()
+
+
+async def update_client_email(admin_id: int, telegram_id: int, email: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE clients SET email=? WHERE admin_id=? AND telegram_id=?",
+            (email, admin_id, telegram_id)
+        )
+        await db.commit()
+
+
+async def get_client_visit_count(admin_id: int, telegram_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE admin_id=? AND client_telegram_id=? AND status='completed'",
+            (admin_id, telegram_id)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
+
+
 # ─── BOOKINGS ─────────────────────────────────────────────────────────────────
 
 async def create_booking(admin_id: int, client_telegram_id: int, service_id: int,
                          booking_date: str, booking_time: str):
     """
-    Fix #7: Check for slot conflicts inside a transaction before inserting,
-    to prevent double-booking when two clients race for the same slot.
+    Atomically check for conflicts and insert booking.
     Returns the new booking id, or None if the slot was already taken.
     """
     async with aiosqlite.connect(DB_PATH) as db:
-        # Serialise concurrent writes with an exclusive transaction
         await db.execute("BEGIN EXCLUSIVE")
         try:
-            # Get service duration for overlap check
             async with db.execute(
                 "SELECT duration FROM services WHERE id = ?", (service_id,)
             ) as cur:
@@ -202,7 +256,6 @@ async def create_booking(admin_id: int, client_telegram_id: int, service_id: int
                 return None
             new_duration = row[0]
 
-            # Fetch all booked slots for that master/date
             async with db.execute(
                 """SELECT b.booking_time, s.duration
                    FROM bookings b JOIN services s ON b.service_id = s.id
@@ -211,7 +264,6 @@ async def create_booking(admin_id: int, client_telegram_id: int, service_id: int
             ) as cur:
                 existing = await cur.fetchall()
 
-            # Convert to minute ranges and check overlap
             fmt = "%H:%M"
             new_dt = datetime.strptime(booking_time, fmt)
             new_start = new_dt.hour * 60 + new_dt.minute
@@ -223,7 +275,7 @@ async def create_booking(admin_id: int, client_telegram_id: int, service_id: int
                 ex_end = ex_start + bd
                 if new_start < ex_end and new_end > ex_start:
                     await db.execute("ROLLBACK")
-                    return None  # slot conflict
+                    return None
 
             cur2 = await db.execute(
                 """INSERT INTO bookings
@@ -396,10 +448,12 @@ async def mark_reminder_sent(booking_id: int, reminder_type: str):
 
 # ─── WAITLIST ─────────────────────────────────────────────────────────────────
 
-async def add_to_waitlist(admin_id: int, client_telegram_id: int, service_id: int, preferred_date: str = None):
+async def add_to_waitlist(admin_id: int, client_telegram_id: int, service_id: int,
+                          preferred_date: str = None):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO waitlist (admin_id, client_telegram_id, service_id, preferred_date) VALUES (?, ?, ?, ?)",
+            "INSERT INTO waitlist (admin_id, client_telegram_id, service_id, preferred_date) "
+            "VALUES (?, ?, ?, ?)",
             (admin_id, client_telegram_id, service_id, preferred_date)
         )
         await db.commit()
@@ -419,7 +473,47 @@ async def get_waitlist(admin_id: int):
             return await cur.fetchall()
 
 
+async def get_client_waitlist(admin_id: int, client_telegram_id: int):
+    """Return all waitlist entries belonging to a specific client."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT w.*, s.name as service_name
+               FROM waitlist w
+               JOIN services s ON w.service_id = s.id
+               WHERE w.admin_id = ? AND w.client_telegram_id = ?
+               ORDER BY w.preferred_date""",
+            (admin_id, client_telegram_id)
+        ) as cur:
+            return await cur.fetchall()
+
+
+async def get_waitlist_by_date(admin_id: int, date_str: str):
+    """Return waitlist entries for a specific master/date (used for slot-open notifications)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT w.*, s.name as service_name, c.name as client_name
+               FROM waitlist w
+               JOIN services s ON w.service_id = s.id
+               JOIN clients c ON w.admin_id = c.admin_id AND w.client_telegram_id = c.telegram_id
+               WHERE w.admin_id = ? AND w.preferred_date = ?""",
+            (admin_id, date_str)
+        ) as cur:
+            return await cur.fetchall()
+
+
 async def remove_from_waitlist(waitlist_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM waitlist WHERE id = ?", (waitlist_id,))
+        await db.commit()
+
+
+async def remove_client_waitlist_entry(waitlist_id: int, client_telegram_id: int):
+    """Remove a specific waitlist entry, verifying ownership."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM waitlist WHERE id = ? AND client_telegram_id = ?",
+            (waitlist_id, client_telegram_id)
+        )
         await db.commit()
