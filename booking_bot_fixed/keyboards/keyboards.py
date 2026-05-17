@@ -42,8 +42,21 @@ def master_main_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📆 Все записи", callback_data="m:bookings")],
         [InlineKeyboardButton(text="💰 Статистика дохода", callback_data="m:stats")],
         [InlineKeyboardButton(text="⏰ Настройки рабочего времени", callback_data="m:schedule")],
+        [InlineKeyboardButton(text="ℹ️ Моя страница для клиентов", callback_data="m:my_info")],
         [InlineKeyboardButton(text="🔗 Моя ссылка для клиентов", callback_data="m:link")],
         [InlineKeyboardButton(text="👥 Лист ожидания", callback_data="m:waitlist")],
+    ])
+
+
+def master_info_kb() -> InlineKeyboardMarkup:
+    """Keyboard for editing the master's public profile page."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Описание", callback_data="m:info:bio")],
+        [InlineKeyboardButton(text="✏️ Адрес", callback_data="m:info:address")],
+        [InlineKeyboardButton(text="✏️ Ссылка Яндекс.Карты", callback_data="m:info:maps_yandex")],
+        [InlineKeyboardButton(text="✏️ Ссылка 2ГИС", callback_data="m:info:maps_2gis")],
+        [InlineKeyboardButton(text="✏️ Координаты (широта, долгота)", callback_data="m:info:lat_lon")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="m:back")],
     ])
 
 

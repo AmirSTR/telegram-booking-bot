@@ -2,7 +2,6 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
 
-from config import MASTER_ADDRESS
 from db.database import get_pending_reminders_24h, get_pending_reminders_2h, mark_reminder_sent
 from keyboards.keyboards import reminder_confirm_kb
 from utils.schedule import format_date_ru
@@ -12,10 +11,10 @@ logger = logging.getLogger(__name__)
 
 async def send_reminders(bot: Bot):
     """Send 24h and 2h reminders for upcoming bookings (UX-6)."""
-    addr_line = f"\n📍 Адрес: {MASTER_ADDRESS}" if MASTER_ADDRESS else ""
 
     # 24-hour reminders
     for booking in await get_pending_reminders_24h():
+        addr_line = f"\n📍 Адрес: {booking['master_address']}" if booking["master_address"] else ""
         try:
             await bot.send_message(
                 booking["client_telegram_id"],
@@ -35,6 +34,7 @@ async def send_reminders(bot: Bot):
 
     # 2-hour reminders
     for booking in await get_pending_reminders_2h():
+        addr_line = f"\n📍 Адрес: {booking['master_address']}" if booking["master_address"] else ""
         try:
             await bot.send_message(
                 booking["client_telegram_id"],

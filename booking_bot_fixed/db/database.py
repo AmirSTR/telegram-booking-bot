@@ -78,11 +78,18 @@ async def init_db():
 
     # Migrations: add columns that may not exist in older DBs
     async with aiosqlite.connect(DB_PATH) as db:
-        try:
-            await db.execute("ALTER TABLE clients ADD COLUMN email TEXT")
-            await db.commit()
-        except Exception:
-            pass  # Column already exists
+        for col in ["email"]:
+            try:
+                await db.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
+                await db.commit()
+            except Exception:
+                pass
+        for col in ["bio", "address", "maps_yandex", "maps_2gis", "lat", "lon"]:
+            try:
+                await db.execute(f"ALTER TABLE masters ADD COLUMN {col} TEXT")
+                await db.commit()
+            except Exception:
+                pass
 
 
 # ─── MASTERS ──────────────────────────────────────────────────────────────────
@@ -115,6 +122,21 @@ async def get_all_masters():
 async def remove_master(telegram_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM masters WHERE telegram_id = ?", (telegram_id,))
+        await db.commit()
+
+
+_MASTER_INFO_FIELDS = {"bio", "address", "maps_yandex", "maps_2gis", "lat", "lon"}
+
+
+async def update_master_info(telegram_id: int, field: str, value: str):
+    """Update a single info field for a master. Field must be in the whitelist."""
+    if field not in _MASTER_INFO_FIELDS:
+        raise ValueError(f"Invalid master info field: {field}")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            f"UPDATE masters SET {field}=? WHERE telegram_id=?",
+            (value or None, telegram_id)
+        )
         await db.commit()
 
 
@@ -411,10 +433,12 @@ async def get_pending_reminders_24h():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT b.*, s.name as service_name, c.name as client_name
+            """SELECT b.*, s.name as service_name, c.name as client_name,
+                      m.name as master_name, m.address as master_address
                FROM bookings b
                JOIN services s ON b.service_id = s.id
                JOIN clients c ON b.admin_id = c.admin_id AND b.client_telegram_id = c.telegram_id
+               JOIN masters m ON b.admin_id = m.telegram_id
                WHERE b.status IN ('pending', 'confirmed')
                AND b.reminder_24h = 0
                AND datetime(b.booking_date || ' ' || b.booking_time)
@@ -427,10 +451,12 @@ async def get_pending_reminders_2h():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT b.*, s.name as service_name, c.name as client_name
+            """SELECT b.*, s.name as service_name, c.name as client_name,
+                      m.name as master_name, m.address as master_address
                FROM bookings b
                JOIN services s ON b.service_id = s.id
                JOIN clients c ON b.admin_id = c.admin_id AND b.client_telegram_id = c.telegram_id
+               JOIN masters m ON b.admin_id = m.telegram_id
                WHERE b.status IN ('pending', 'confirmed')
                AND b.reminder_2h = 0
                AND datetime(b.booking_date || ' ' || b.booking_time)

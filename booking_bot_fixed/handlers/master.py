@@ -7,14 +7,15 @@ from db.database import (
     get_master, get_services, add_service, delete_service,
     get_master_bookings, get_income_stats, update_master_schedule,
     confirm_booking, complete_booking, cancel_booking, get_booking,
-    get_waitlist, remove_from_waitlist, get_all_clients
+    get_waitlist, remove_from_waitlist, get_all_clients,
+    update_master_info
 )
 from keyboards.keyboards import (
     master_main_kb, services_kb, confirm_delete_service_kb,
     bookings_master_kb, booking_actions_master_kb, stats_period_kb,
-    waitlist_kb
+    waitlist_kb, master_info_kb
 )
-from utils.states import AddServiceStates, ScheduleStates
+from utils.states import AddServiceStates, ScheduleStates, MasterInfoStates
 from utils.schedule import format_date_ru
 
 router = Router()
@@ -412,6 +413,116 @@ async def cb_master_link(callback: CallbackQuery):
         reply_markup=master_main_kb()
     )
     await callback.answer()
+
+
+# ─── MY INFO PAGE ─────────────────────────────────────────────────────────────
+
+def _info_display(master) -> str:
+    def val(v):
+        return v if v else "не указано"
+    lat = master["lat"] or ""
+    lon = master["lon"] or ""
+    coords = f"{lat}, {lon}" if lat and lon else "не указаны"
+    return (
+        f"ℹ️ <b>Ваша страница для клиентов</b>\n\n"
+        f"📝 Описание:\n{val(master['bio'])}\n\n"
+        f"📍 Адрес: {val(master['address'])}\n"
+        f"🗺 Яндекс.Карты: {val(master['maps_yandex'])}\n"
+        f"🗺 2ГИС: {val(master['maps_2gis'])}\n"
+        f"📌 Координаты: {coords}\n\n"
+        f"<i>Нажмите кнопку, чтобы изменить поле:</i>"
+    )
+
+
+@router.callback_query(F.data == "m:my_info")
+async def cb_master_my_info(callback: CallbackQuery):
+    if not await is_master(callback.from_user.id):
+        return
+    master = await get_master(callback.from_user.id)
+    await callback.message.edit_text(
+        _info_display(master), parse_mode="HTML", reply_markup=master_info_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("m:info:"))
+async def cb_master_info_field(callback: CallbackQuery, state: FSMContext):
+    if not await is_master(callback.from_user.id):
+        return
+    field = callback.data.split(":")[2]
+    prompts = {
+        "bio":         ("📝 Введите описание (расскажите о себе, опыте, стиле):", MasterInfoStates.editing_bio),
+        "address":     ("📍 Введите адрес (например: Москва, ул. Пушкина, д. 10):", MasterInfoStates.editing_address),
+        "maps_yandex": ("🗺 Вставьте ссылку на Яндекс.Карты:", MasterInfoStates.editing_maps_yandex),
+        "maps_2gis":   ("🗺 Вставьте ссылку на 2ГИС:", MasterInfoStates.editing_maps_2gis),
+        "lat_lon":     ("📌 Введите координаты через запятую (широта, долгота)\nПример: <code>55.7558, 37.6173</code>:", MasterInfoStates.editing_lat_lon),
+    }
+    if field not in prompts:
+        await callback.answer()
+        return
+    prompt, next_state = prompts[field]
+    await callback.message.edit_text(prompt, parse_mode="HTML")
+    await state.set_state(next_state)
+    await callback.answer()
+
+
+async def _save_info_field(message: Message, state: FSMContext, field: str):
+    value = message.text.strip() if message.text else ""
+    await update_master_info(message.from_user.id, field, value)
+    await state.set_state(None)
+    master = await get_master(message.from_user.id)
+    await message.answer("✅ Сохранено!", parse_mode="HTML")
+    await message.answer(_info_display(master), parse_mode="HTML", reply_markup=master_info_kb())
+
+
+@router.message(MasterInfoStates.editing_bio)
+async def process_master_bio(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await _save_info_field(message, state, "bio")
+
+
+@router.message(MasterInfoStates.editing_address)
+async def process_master_address(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await _save_info_field(message, state, "address")
+
+
+@router.message(MasterInfoStates.editing_maps_yandex)
+async def process_master_maps_yandex(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await _save_info_field(message, state, "maps_yandex")
+
+
+@router.message(MasterInfoStates.editing_maps_2gis)
+async def process_master_maps_2gis(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await _save_info_field(message, state, "maps_2gis")
+
+
+@router.message(MasterInfoStates.editing_lat_lon)
+async def process_master_lat_lon(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    text = message.text.strip() if message.text else ""
+    # Validate "lat, lon" format
+    parts = [p.strip() for p in text.replace(",", " ").split()]
+    if len(parts) == 2:
+        try:
+            lat, lon = float(parts[0]), float(parts[1])
+            await update_master_info(message.from_user.id, "lat", str(lat))
+            await update_master_info(message.from_user.id, "lon", str(lon))
+            await state.set_state(None)
+            master = await get_master(message.from_user.id)
+            await message.answer("✅ Координаты сохранены!")
+            await message.answer(_info_display(master), parse_mode="HTML", reply_markup=master_info_kb())
+            return
+        except ValueError:
+            pass
+    await message.answer("❌ Неверный формат. Введите два числа через запятую, например: <code>55.7558, 37.6173</code>", parse_mode="HTML")
 
 
 # ─── WAITLIST ─────────────────────────────────────────────────────────────────

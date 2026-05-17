@@ -47,3 +47,11 @@ class WaitlistDateStates(StatesGroup):
 class ProfileStates(StatesGroup):
     editing_phone = State()
     editing_email = State()
+
+
+class MasterInfoStates(StatesGroup):
+    editing_bio = State()
+    editing_address = State()
+    editing_maps_yandex = State()
+    editing_maps_2gis = State()
+    editing_lat_lon = State()

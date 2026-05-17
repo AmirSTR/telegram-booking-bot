@@ -5,7 +5,6 @@ from aiogram.types import (
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 
-from config import MASTER_BIO, MASTER_ADDRESS, MASTER_MAPS_YANDEX, MASTER_MAPS_2GIS, MASTER_LAT, MASTER_LON
 from db.database import (
     get_master, get_client, register_client, get_services, get_service,
     get_booked_slots, create_booking, get_client_bookings,
@@ -449,10 +448,10 @@ async def cb_confirm_booking(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(None)
 
-    # UX-7: generate Google Calendar link
+    # UX-7: generate Google Calendar link (address from master's DB profile)
     gcal_url = make_gcal_url(
         service["name"], booking_date, booking_time,
-        service["duration"], master["name"], MASTER_ADDRESS
+        service["duration"], master["name"], master["address"] or ""
     )
 
     # UX-6: confirm with reminder info
@@ -754,20 +753,28 @@ async def cb_about_master(callback: CallbackQuery, state: FSMContext):
         return
     master = await get_master(master_id)
 
+    # All info comes from the master's own DB profile (UX-5, SaaS-ready)
+    bio = master["bio"] or ""
+    address = master["address"] or ""
+    maps_yandex = master["maps_yandex"] or ""
+    maps_2gis = master["maps_2gis"] or ""
+    lat = master["lat"] or ""
+    lon = master["lon"] or ""
+
     text = f"ℹ️ <b>О мастере {master['name']}</b>\n\n"
-    if MASTER_BIO:
-        text += f"{MASTER_BIO}\n\n"
-    if MASTER_ADDRESS:
-        text += f"📍 <b>Адрес:</b> {MASTER_ADDRESS}\n"
-    if not MASTER_BIO and not MASTER_ADDRESS:
+    if bio:
+        text += f"{bio}\n\n"
+    if address:
+        text += f"📍 <b>Адрес:</b> {address}\n"
+    if not bio and not address:
         text += "Информация о мастере ещё не заполнена."
 
-    await send_menu(callback, text, about_master_kb(MASTER_MAPS_YANDEX, MASTER_MAPS_2GIS))
+    await send_menu(callback, text, about_master_kb(maps_yandex, maps_2gis))
 
-    # Send Telegram location pin if coordinates are configured
-    if MASTER_LAT and MASTER_LON:
+    # Send Telegram location pin if master filled in coordinates
+    if lat and lon:
         try:
-            await callback.message.answer_location(float(MASTER_LAT), float(MASTER_LON))
+            await callback.message.answer_location(float(lat), float(lon))
         except Exception:
             pass
 
