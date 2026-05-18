@@ -447,7 +447,8 @@ async def get_income_stats(admin_id: int, period: str = "month"):
 
 # ─── REMINDERS ────────────────────────────────────────────────────────────────
 
-async def get_pending_reminders_24h():
+async def get_pending_reminders_24h(window_start: str, window_end: str):
+    """window_start/end: 'YYYY-MM-DD HH:MM' in masters' local time."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -459,13 +460,14 @@ async def get_pending_reminders_24h():
                JOIN masters m ON b.admin_id = m.telegram_id
                WHERE b.status IN ('pending', 'confirmed')
                AND b.reminder_24h = 0
-               AND datetime(b.booking_date || ' ' || b.booking_time)
-                   BETWEEN datetime('now', '+23 hours') AND datetime('now', '+25 hours')"""
+               AND (b.booking_date || ' ' || b.booking_time) BETWEEN ? AND ?""",
+            (window_start, window_end),
         ) as cur:
             return await cur.fetchall()
 
 
-async def get_pending_reminders_2h():
+async def get_pending_reminders_2h(window_start: str, window_end: str):
+    """window_start/end: 'YYYY-MM-DD HH:MM' in masters' local time."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -477,8 +479,8 @@ async def get_pending_reminders_2h():
                JOIN masters m ON b.admin_id = m.telegram_id
                WHERE b.status IN ('pending', 'confirmed')
                AND b.reminder_2h = 0
-               AND datetime(b.booking_date || ' ' || b.booking_time)
-                   BETWEEN datetime('now', '+1 hours') AND datetime('now', '+3 hours')"""
+               AND (b.booking_date || ' ' || b.booking_time) BETWEEN ? AND ?""",
+            (window_start, window_end),
         ) as cur:
             return await cur.fetchall()
 

@@ -1,19 +1,31 @@
 import logging
+from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
 
+from config import TIMEZONE_OFFSET_HOURS
 from db.database import get_pending_reminders_24h, get_pending_reminders_2h, mark_reminder_sent
 from keyboards.keyboards import reminder_confirm_kb
 from utils.schedule import format_date_ru
 
 logger = logging.getLogger(__name__)
 
+_FMT = "%Y-%m-%d %H:%M"
+
+
+def _local_now() -> datetime:
+    """Current time in masters' local timezone (UTC + TIMEZONE_OFFSET_HOURS)."""
+    return datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET_HOURS)
+
 
 async def send_reminders(bot: Bot):
     """Send 24h and 2h reminders for upcoming bookings (UX-6)."""
+    now = _local_now()
 
     # 24-hour reminders
-    for booking in await get_pending_reminders_24h():
+    w24_start = (now + timedelta(hours=23)).strftime(_FMT)
+    w24_end   = (now + timedelta(hours=25)).strftime(_FMT)
+    for booking in await get_pending_reminders_24h(w24_start, w24_end):
         addr_line = f"\n📍 Адрес: {booking['master_address']}" if booking["master_address"] else ""
         try:
             await bot.send_message(
@@ -33,7 +45,9 @@ async def send_reminders(bot: Bot):
             logger.error(f"Failed to send 24h reminder for booking #{booking['id']}: {e}")
 
     # 2-hour reminders
-    for booking in await get_pending_reminders_2h():
+    w2_start = (now + timedelta(hours=1)).strftime(_FMT)
+    w2_end   = (now + timedelta(hours=3)).strftime(_FMT)
+    for booking in await get_pending_reminders_2h(w2_start, w2_end):
         addr_line = f"\n📍 Адрес: {booking['master_address']}" if booking["master_address"] else ""
         try:
             await bot.send_message(

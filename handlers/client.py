@@ -470,7 +470,7 @@ async def cb_confirm_booking(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "c:cancel_booking")
 async def cb_cancel_new_booking(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(None)
+    await state.clear()
     await update_menu(callback, "Запись отменена.", client_main_kb())
     await callback.answer()
 
@@ -582,6 +582,9 @@ async def cb_cancel_select(callback: CallbackQuery):
     if not b:
         await callback.answer("Запись не найдена", show_alert=True)
         return
+    if b["client_telegram_id"] != callback.from_user.id:
+        await callback.answer("Запись не найдена", show_alert=True)
+        return
     await update_menu(
         callback,
         f"Отменить запись на <b>{format_date_ru(b['booking_date'])}</b>"
@@ -596,6 +599,9 @@ async def cb_do_cancel(callback: CallbackQuery, state: FSMContext):
     booking_id = int(callback.data.split(":")[2])
     b = await get_booking(booking_id)
     if not b:
+        return
+    if b["client_telegram_id"] != callback.from_user.id:
+        await callback.answer("Запись не найдена.", show_alert=True)
         return
     await cancel_booking(booking_id, client_telegram_id=callback.from_user.id)
 
@@ -787,7 +793,8 @@ async def cb_about_master(callback: CallbackQuery, state: FSMContext):
 
     if lat and lon:
         try:
-            await callback.message.answer_location(float(lat), float(lon))
+            loc_msg = await callback.message.answer_location(float(lat), float(lon))
+            await manager.register(callback.bot, loc_msg.chat.id, callback.from_user.id, loc_msg.message_id)
         except Exception:
             pass
 
@@ -802,6 +809,9 @@ async def cb_reminder_confirm(callback: CallbackQuery):
     b = await get_booking(booking_id)
     if not b:
         await callback.answer("Запись не найдена.", show_alert=True)
+        return
+    if b["client_telegram_id"] != callback.from_user.id:
+        await callback.answer("Нет доступа.", show_alert=True)
         return
     await confirm_booking(booking_id)
     try:
@@ -823,6 +833,9 @@ async def cb_reminder_cancel(callback: CallbackQuery):
     b = await get_booking(booking_id)
     if not b:
         await callback.answer("Запись не найдена.", show_alert=True)
+        return
+    if b["client_telegram_id"] != callback.from_user.id:
+        await callback.answer("Нет доступа.", show_alert=True)
         return
     await cancel_booking(booking_id)
     try:
