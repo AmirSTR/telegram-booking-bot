@@ -17,6 +17,7 @@ from keyboards.keyboards import (
 )
 from utils.states import AddServiceStates, ScheduleStates, MasterInfoStates
 from utils.schedule import format_date_ru
+from utils.message_manager import manager
 
 router = Router()
 
@@ -25,11 +26,21 @@ async def is_master(user_id: int) -> bool:
     return await get_master(user_id) is not None
 
 
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+async def _send_master(message: Message, text: str, keyboard=None, parse_mode: str = "HTML") -> None:
+    """Send a bot message and register it for auto-cleanup."""
+    msg = await message.answer(text, parse_mode=parse_mode, reply_markup=keyboard)
+    await manager.register(message.bot, msg.chat.id, message.from_user.id, msg.message_id)
+
+
+async def _finish_master_fsm(message: Message, text: str, keyboard=None, parse_mode: str = "HTML") -> None:
+    """End a multi-step FSM: clear all tracked intermediate messages, send clean panel."""
+    await manager.clear(message.bot, message.from_user.id)
+    await _send_master(message, text, keyboard, parse_mode)
+
+
 # ─── MAIN PANEL ───────────────────────────────────────────────────────────────
-
-# /start is handled entirely in client_router (client.py)
-# so that deep-link routing works correctly regardless of router order
-
 
 @router.callback_query(F.data == "m:back")
 async def cb_master_back(callback: CallbackQuery):
@@ -51,13 +62,9 @@ async def cb_services(callback: CallbackQuery):
     if not await is_master(callback.from_user.id):
         return
     services = await get_services(callback.from_user.id)
-    if not services:
-        text = "💼 У тебя пока нет услуг.\nДобавь первую!"
-    else:
-        text = "💼 <b>Твои услуги</b>\n\nНажми на услугу, чтобы удалить её:"
-    await callback.message.edit_text(
-        text, parse_mode="HTML", reply_markup=services_kb(services)
-    )
+    text = "💼 У тебя пока нет услуг.\nДобавь первую!" if not services else \
+           "💼 <b>Твои услуги</b>\n\nНажми на услугу, чтобы удалить её:"
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=services_kb(services))
     await callback.answer()
 
 
@@ -75,7 +82,7 @@ async def process_service_name(message: Message, state: FSMContext):
     if not await is_master(message.from_user.id):
         return
     await state.update_data(name=message.text.strip())
-    await message.answer("Введи цену в рублях (только число, например: 1500):")
+    await _send_master(message, "Введи цену в рублях (только число, например: 1500):")
     await state.set_state(AddServiceStates.waiting_price)
 
 
@@ -86,10 +93,10 @@ async def process_service_price(message: Message, state: FSMContext):
     try:
         price = float(message.text.strip().replace(",", "."))
     except ValueError:
-        await message.answer("❌ Введи число, например: 1500")
+        await _send_master(message, "❌ Введи число, например: 1500")
         return
     await state.update_data(price=price)
-    await message.answer("Введи длительность в минутах (например: 60):")
+    await _send_master(message, "Введи длительность в минутах (например: 60):")
     await state.set_state(AddServiceStates.waiting_duration)
 
 
@@ -102,17 +109,18 @@ async def process_service_duration(message: Message, state: FSMContext):
         if duration <= 0:
             raise ValueError
     except ValueError:
-        await message.answer("❌ Введи целое число минут, например: 60")
+        await _send_master(message, "❌ Введи целое число минут, например: 60")
         return
     data = await state.get_data()
     await add_service(message.from_user.id, data["name"], data["price"], duration)
     await state.clear()
     services = await get_services(message.from_user.id)
-    await message.answer(
+    await _finish_master_fsm(
+        message,
         f"✅ Услуга <b>{data['name']}</b> добавлена!\n"
-        f"Цена: {data['price']:.0f}₽, Длительность: {duration} мин",
-        parse_mode="HTML",
-        reply_markup=services_kb(services)
+        f"Цена: {data['price']:.0f}₽, Длительность: {duration} мин\n\n"
+        f"💼 <b>Твои услуги:</b>",
+        services_kb(services),
     )
 
 
@@ -274,7 +282,6 @@ async def cb_cancel_booking_master(callback: CallbackQuery):
         )
     except Exception:
         pass
-    # UX-3: notify waitlist clients for the freed date
     from utils.notifications import notify_waitlist
     await notify_waitlist(callback.bot, b["admin_id"], b["booking_date"])
     await callback.answer("❌ Запись отменена", show_alert=True)
@@ -306,7 +313,6 @@ async def cb_stats_period(callback: CallbackQuery):
     total = stats["total_bookings"] or 0
     clients = stats["unique_clients"] or 0
 
-    # Fix #8: ternary inside f-string replaced with explicit if/else
     if total > 0:
         text = (
             f"💰 <b>Доход за {period_labels.get(period, period)}:</b>\n\n"
@@ -321,9 +327,7 @@ async def cb_stats_period(callback: CallbackQuery):
             f"Пока нет выполненных записей."
         )
 
-    await callback.message.edit_text(
-        text, parse_mode="HTML", reply_markup=stats_period_kb()
-    )
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=stats_period_kb())
     await callback.answer()
 
 
@@ -352,10 +356,10 @@ async def process_work_start(message: Message, state: FSMContext):
         from datetime import datetime
         datetime.strptime(message.text.strip(), "%H:%M")
     except ValueError:
-        await message.answer("❌ Формат ЧЧ:ММ, например: 09:00")
+        await _send_master(message, "❌ Формат ЧЧ:ММ, например: 09:00")
         return
     await state.update_data(work_start=message.text.strip())
-    await message.answer("Введи конец рабочего дня (формат ЧЧ:ММ, например <code>18:00</code>):", parse_mode="HTML")
+    await _send_master(message, "Введи конец рабочего дня (формат ЧЧ:ММ, например <code>18:00</code>):", parse_mode="HTML")
     await state.set_state(ScheduleStates.waiting_work_end)
 
 
@@ -367,10 +371,10 @@ async def process_work_end(message: Message, state: FSMContext):
         from datetime import datetime
         datetime.strptime(message.text.strip(), "%H:%M")
     except ValueError:
-        await message.answer("❌ Формат ЧЧ:ММ, например: 18:00")
+        await _send_master(message, "❌ Формат ЧЧ:ММ, например: 18:00")
         return
     await state.update_data(work_end=message.text.strip())
-    await message.answer("Введи длительность одного слота в минутах (например: 60):")
+    await _send_master(message, "Введи длительность одного слота в минутах (например: 60):")
     await state.set_state(ScheduleStates.waiting_slot_duration)
 
 
@@ -383,16 +387,17 @@ async def process_slot_duration(message: Message, state: FSMContext):
         if slot <= 0:
             raise ValueError
     except ValueError:
-        await message.answer("❌ Введи целое число, например: 60")
+        await _send_master(message, "❌ Введи целое число, например: 60")
         return
     data = await state.get_data()
     await update_master_schedule(message.from_user.id, data["work_start"], data["work_end"], slot)
     await state.clear()
-    await message.answer(
+    await _finish_master_fsm(
+        message,
         f"✅ Расписание обновлено!\n"
         f"Рабочий день: {data['work_start']} — {data['work_end']}\n"
         f"Длительность слота: {slot} мин",
-        reply_markup=master_main_kb()
+        master_main_kb(),
     )
 
 
@@ -471,8 +476,11 @@ async def _save_info_field(message: Message, state: FSMContext, field: str):
     await update_master_info(message.from_user.id, field, value)
     await state.set_state(None)
     master = await get_master(message.from_user.id)
-    await message.answer("✅ Сохранено!", parse_mode="HTML")
-    await message.answer(_info_display(master), parse_mode="HTML", reply_markup=master_info_kb())
+    await _finish_master_fsm(
+        message,
+        f"✅ Сохранено!\n\n{_info_display(master)}",
+        master_info_kb(),
+    )
 
 
 @router.message(MasterInfoStates.editing_bio)
@@ -508,7 +516,6 @@ async def process_master_lat_lon(message: Message, state: FSMContext):
     if not await is_master(message.from_user.id):
         return
     text = message.text.strip() if message.text else ""
-    # Validate "lat, lon" format
     parts = [p.strip() for p in text.replace(",", " ").split()]
     if len(parts) == 2:
         try:
@@ -517,12 +524,19 @@ async def process_master_lat_lon(message: Message, state: FSMContext):
             await update_master_info(message.from_user.id, "lon", str(lon))
             await state.set_state(None)
             master = await get_master(message.from_user.id)
-            await message.answer("✅ Координаты сохранены!")
-            await message.answer(_info_display(master), parse_mode="HTML", reply_markup=master_info_kb())
+            await _finish_master_fsm(
+                message,
+                f"✅ Координаты сохранены!\n\n{_info_display(master)}",
+                master_info_kb(),
+            )
             return
         except ValueError:
             pass
-    await message.answer("❌ Неверный формат. Введите два числа через запятую, например: <code>55.7558, 37.6173</code>", parse_mode="HTML")
+    await _send_master(
+        message,
+        "❌ Неверный формат. Введите два числа через запятую, например: <code>55.7558, 37.6173</code>",
+        parse_mode="HTML",
+    )
 
 
 # ─── WAITLIST ─────────────────────────────────────────────────────────────────
