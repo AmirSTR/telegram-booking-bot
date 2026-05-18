@@ -137,6 +137,9 @@ async def client_start(message: Message, state: FSMContext):
             stored_master_id = existing["admin_id"]
             await state.update_data(master_id=stored_master_id)
             master = await get_master(stored_master_id)
+            if not master:
+                await send_tracked(message, "❌ Мастер не найден. Обратитесь к мастеру за ссылкой.")
+                return
             await send_tracked(
                 message,
                 f"✂️ Добро пожаловать к мастеру <b>{master['name']}</b>!\n\nЧто вы хотите сделать?",
@@ -227,6 +230,9 @@ async def handle_menu_button(message: Message, state: FSMContext):
         await send_tracked(message, "Перейди по ссылке мастера.")
         return
     master = await get_master(master_id)
+    if not master:
+        await send_tracked(message, "❌ Мастер не найден.")
+        return
     await send_tracked(
         message,
         f"✂️ Мастер <b>{master['name']}</b>\n\nЧто вы хотите сделать?",
@@ -266,6 +272,10 @@ async def _finish_registration(message: Message, state: FSMContext, phone: str |
     master_id = data.get("master_id")
     name = data.get("client_name")
     master = await get_master(master_id)
+    if not master:
+        await send_tracked(message, "❌ Мастер не найден. Попробуйте перейти по ссылке заново.")
+        await state.clear()
+        return
     await register_client(master_id, message.from_user.id, name, phone)
     await state.set_state(None)
     # BUG-3: persistent reply keyboard (not tracked — sets the bottom "Меню" button forever)
@@ -286,6 +296,9 @@ async def cb_client_back(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сессия истекла. Перейди по ссылке мастера заново.", show_alert=True)
         return
     master = await get_master(master_id)
+    if not master:
+        await callback.answer("Мастер не найден.", show_alert=True)
+        return
     await update_menu(
         callback,
         f"✂️ Мастер <b>{master['name']}</b>\n\nЧто вы хотите сделать?",
@@ -344,6 +357,9 @@ async def cb_choose_date(callback: CallbackQuery, state: FSMContext):
 
     master = await get_master(master_id)
     service = await get_service(data["service_id"])
+    if not master or not service:
+        await callback.answer("Ошибка: данные не найдены.", show_alert=True)
+        return
 
     all_slots = generate_time_slots(master["work_start"], master["work_end"], master["slot_duration"])
     booked = await get_booked_slots(master_id, date_str)
@@ -436,6 +452,9 @@ async def cb_confirm_booking(callback: CallbackQuery, state: FSMContext):
     service = await get_service(service_id)
     master = await get_master(master_id)
     client = await get_client(master_id, callback.from_user.id)
+    if not master or not service or not client:
+        await callback.answer("Ошибка при подтверждении. Попробуйте снова.", show_alert=True)
+        return
 
     try:
         await callback.bot.send_message(
@@ -522,8 +541,11 @@ async def cb_wl_confirm(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Выберите хотя бы одну дату!", show_alert=True)
         return
 
+    existing_entries = await get_client_waitlist(master_id, callback.from_user.id)
+    existing_keys = {(e["service_id"], e["preferred_date"]) for e in existing_entries}
     for date_str in selected:
-        await add_to_waitlist(master_id, callback.from_user.id, service_id, date_str)
+        if (service_id, date_str) not in existing_keys:
+            await add_to_waitlist(master_id, callback.from_user.id, service_id, date_str)
 
     await state.set_state(None)
     await state.update_data(waitlist_dates=[])
@@ -775,6 +797,9 @@ async def cb_about_master(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сессия истекла.", show_alert=True)
         return
     master = await get_master(master_id)
+    if not master:
+        await callback.answer("Мастер не найден.", show_alert=True)
+        return
 
     bio = master["bio"] or ""
     address = master["address"] or ""

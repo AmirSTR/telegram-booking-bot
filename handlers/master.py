@@ -201,6 +201,9 @@ async def cb_add_service_start(callback: CallbackQuery, state: FSMContext):
 async def process_service_name(message: Message, state: FSMContext):
     if not await is_master(message.from_user.id):
         return
+    if not message.text:
+        await _send_master(message, "❌ Введи название текстом.")
+        return
     await state.update_data(name=message.text.strip())
     await _send_master(message, "Введи цену в рублях (только число, например: 1500):")
     await state.set_state(AddServiceStates.waiting_price)
@@ -212,7 +215,7 @@ async def process_service_price(message: Message, state: FSMContext):
         return
     try:
         price = float(message.text.strip().replace(",", "."))
-    except ValueError:
+    except (ValueError, AttributeError):
         await _send_master(message, "❌ Введи число, например: 1500")
         return
     await state.update_data(price=price)
@@ -228,7 +231,7 @@ async def process_service_duration(message: Message, state: FSMContext):
         duration = int(message.text.strip())
         if duration <= 0:
             raise ValueError
-    except ValueError:
+    except (ValueError, AttributeError):
         await _send_master(message, "❌ Введи целое число минут, например: 60")
         return
     data = await state.get_data()
@@ -418,7 +421,7 @@ async def process_work_start(message: Message, state: FSMContext):
     try:
         from datetime import datetime
         datetime.strptime(message.text.strip(), "%H:%M")
-    except ValueError:
+    except (ValueError, AttributeError):
         await _send_master(message, "❌ Формат ЧЧ:ММ, например: 09:00")
         return
     await state.update_data(work_start=message.text.strip())
@@ -433,7 +436,7 @@ async def process_work_end(message: Message, state: FSMContext):
     try:
         from datetime import datetime
         datetime.strptime(message.text.strip(), "%H:%M")
-    except ValueError:
+    except (ValueError, AttributeError):
         await _send_master(message, "❌ Формат ЧЧ:ММ, например: 18:00")
         return
     await state.update_data(work_end=message.text.strip())
@@ -449,7 +452,7 @@ async def process_slot_duration(message: Message, state: FSMContext):
         slot = int(message.text.strip())
         if slot <= 0:
             raise ValueError
-    except ValueError:
+    except (ValueError, AttributeError):
         await _send_master(message, "❌ Введи целое число, например: 60")
         return
     data = await state.get_data()

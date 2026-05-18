@@ -45,7 +45,7 @@ async def process_master_telegram_id(message: Message, state: FSMContext):
         return
     try:
         tg_id = int(message.text.strip())
-    except ValueError:
+    except (ValueError, AttributeError):
         await message.answer("❌ Введите числовой Telegram ID")
         return
     await state.update_data(telegram_id=tg_id)
@@ -58,7 +58,7 @@ async def process_master_name(message: Message, state: FSMContext):
     if not is_super_admin(message.from_user.id):
         return
     data = await state.get_data()
-    name = message.text.strip()
+    name = message.text.strip() if message.text else ""
     tg_id = data["telegram_id"]
 
     existing = await get_master(tg_id)
