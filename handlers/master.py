@@ -1,17 +1,16 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from db.database import (
     get_master, get_services, add_service, delete_service,
     get_master_bookings, get_income_stats, update_master_schedule,
     confirm_booking, complete_booking, cancel_booking, get_booking,
-    get_waitlist, remove_from_waitlist, get_all_clients,
+    get_waitlist, remove_from_waitlist,
     update_master_info
 )
 from keyboards.keyboards import (
-    master_main_kb, services_kb, confirm_delete_service_kb,
+    master_close_kb, services_kb, confirm_delete_service_kb,
     bookings_master_kb, booking_actions_master_kb, stats_period_kb,
     waitlist_kb, master_info_kb
 )
@@ -29,33 +28,154 @@ async def is_master(user_id: int) -> bool:
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 async def _send_master(message: Message, text: str, keyboard=None, parse_mode: str = "HTML") -> None:
-    """Send a bot message and register it for auto-cleanup."""
     msg = await message.answer(text, parse_mode=parse_mode, reply_markup=keyboard)
     await manager.register(message.bot, msg.chat.id, message.from_user.id, msg.message_id)
 
 
-async def _finish_master_fsm(message: Message, text: str, keyboard=None, parse_mode: str = "HTML") -> None:
-    """End a multi-step FSM: clear all tracked intermediate messages, send clean panel."""
+async def _show_content(message: Message, text: str, keyboard=None, parse_mode: str = "HTML") -> None:
+    """Clear old tracked content, send fresh content message."""
     await manager.clear(message.bot, message.from_user.id)
     await _send_master(message, text, keyboard, parse_mode)
 
 
-# ─── MAIN PANEL ───────────────────────────────────────────────────────────────
+async def _finish_master_fsm(message: Message, text: str, keyboard=None, parse_mode: str = "HTML") -> None:
+    """End multi-step FSM: delete all intermediate messages, send clean result."""
+    await manager.clear(message.bot, message.from_user.id)
+    await _send_master(message, text, keyboard, parse_mode)
+
+
+# ─── BOTTOM KEYBOARD NAVIGATION ───────────────────────────────────────────────
+# Text handlers must be registered BEFORE FSM state handlers so that tapping
+# a bottom button always navigates away, even when an FSM flow is in progress.
+
+@router.message(F.text == "💼 Услуги")
+async def msg_master_services(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await state.clear()
+    services = await get_services(message.from_user.id)
+    text = "💼 У тебя пока нет услуг.\nДобавь первую!" if not services else \
+           "💼 <b>Твои услуги</b>\n\nНажми на услугу, чтобы удалить её:"
+    await _show_content(message, text, services_kb(services))
+
+
+@router.message(F.text == "📅 Сегодня")
+async def msg_master_today(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await state.clear()
+    from datetime import date
+    today = date.today().strftime("%Y-%m-%d")
+    bookings = await get_master_bookings(message.from_user.id, date=today)
+    if not bookings:
+        text = f"📅 На сегодня ({format_date_ru(today)}) записей нет."
+    else:
+        text = f"📅 <b>Записи на сегодня ({format_date_ru(today)}):</b>\n\n"
+        for b in bookings:
+            icon = {"pending": "⏳", "confirmed": "✅", "completed": "💚", "cancelled": "❌"}.get(b["status"], "❓")
+            text += f"{icon} <b>{b['booking_time']}</b> — {b['client_name']}\n"
+            text += f"   {b['service_name']} — {b['price']:.0f}₽\n"
+            if b["phone"]:
+                text += f"   📱 {b['phone']}\n"
+            text += "\n"
+    await _show_content(message, text, master_close_kb())
+
+
+@router.message(F.text == "📆 Записи")
+async def msg_master_bookings(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await state.clear()
+    bookings = await get_master_bookings(message.from_user.id)
+    if not bookings:
+        await _show_content(message, "📆 Записей пока нет.", master_close_kb())
+    else:
+        await _show_content(
+            message,
+            "📆 <b>Все записи:</b>\n\nНажми на запись для управления:",
+            bookings_master_kb(bookings),
+        )
+
+
+@router.message(F.text == "💰 Статистика")
+async def msg_master_stats(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await state.clear()
+    await _show_content(message, "💰 <b>Статистика дохода</b>\n\nВыберите период:", stats_period_kb())
+
+
+@router.message(F.text == "⏰ Расписание")
+async def msg_master_schedule(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await state.clear()
+    master = await get_master(message.from_user.id)
+    await _show_content(
+        message,
+        f"⏰ <b>Настройки рабочего времени</b>\n\n"
+        f"Текущие: {master['work_start']} — {master['work_end']}, слот {master['slot_duration']} мин\n\n"
+        f"Введи начало рабочего дня (формат ЧЧ:ММ, например <code>09:00</code>):",
+    )
+    await state.set_state(ScheduleStates.waiting_work_start)
+
+
+@router.message(F.text == "👥 Лист ожидания")
+async def msg_master_waitlist(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await state.clear()
+    waitlist = await get_waitlist(message.from_user.id)
+    if not waitlist:
+        await _show_content(message, "👥 Лист ожидания пуст.", master_close_kb())
+    else:
+        await _show_content(
+            message,
+            "👥 <b>Лист ожидания</b>\n\nНажми на клиента, чтобы уведомить его:",
+            waitlist_kb(waitlist),
+        )
+
+
+@router.message(F.text == "ℹ️ Моя страница")
+async def msg_master_my_info(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await state.clear()
+    master = await get_master(message.from_user.id)
+    await _show_content(message, _info_display(master), master_info_kb())
+
+
+@router.message(F.text == "🔗 Ссылка")
+async def msg_master_link(message: Message, state: FSMContext):
+    if not await is_master(message.from_user.id):
+        return
+    await state.clear()
+    bot_info = await message.bot.get_me()
+    link = f"https://t.me/{bot_info.username}?start=master_{message.from_user.id}"
+    await _show_content(
+        message,
+        f"🔗 <b>Твоя ссылка для клиентов:</b>\n\n"
+        f"<code>{link}</code>\n\n"
+        f"Отправь эту ссылку своим клиентам. Перейдя по ней, они автоматически "
+        f"попадут в твой кабинет и смогут записаться.",
+        master_close_kb(),
+    )
+
+
+# ─── m:back — dismiss content message ─────────────────────────────────────────
 
 @router.callback_query(F.data == "m:back")
 async def cb_master_back(callback: CallbackQuery):
     if not await is_master(callback.from_user.id):
         return
-    master = await get_master(callback.from_user.id)
-    await callback.message.edit_text(
-        f"✂️ <b>{master['name']}</b> — панель управления",
-        parse_mode="HTML",
-        reply_markup=master_main_kb()
-    )
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await callback.answer()
 
 
-# ─── SERVICES ─────────────────────────────────────────────────────────────────
+# ─── SERVICES (inline sub-navigation) ────────────────────────────────────────
 
 @router.callback_query(F.data == "m:services")
 async def cb_services(callback: CallbackQuery):
@@ -159,40 +279,13 @@ async def cb_confirm_del_service(callback: CallbackQuery):
 
 # ─── BOOKINGS ─────────────────────────────────────────────────────────────────
 
-@router.callback_query(F.data == "m:today")
-async def cb_today_bookings(callback: CallbackQuery):
-    if not await is_master(callback.from_user.id):
-        return
-    from datetime import date
-    today = date.today().strftime("%Y-%m-%d")
-    bookings = await get_master_bookings(callback.from_user.id, date=today)
-    if not bookings:
-        await callback.message.edit_text(
-            f"📅 На сегодня ({format_date_ru(today)}) записей нет.",
-            reply_markup=master_main_kb()
-        )
-    else:
-        text = f"📅 <b>Записи на сегодня ({format_date_ru(today)}):</b>\n\n"
-        for b in bookings:
-            status_icon = {"pending": "⏳", "confirmed": "✅", "completed": "💚", "cancelled": "❌"}.get(b["status"], "❓")
-            text += f"{status_icon} <b>{b['booking_time']}</b> — {b['client_name']}\n"
-            text += f"   {b['service_name']} — {b['price']:.0f}₽\n"
-            if b["phone"]:
-                text += f"   📱 {b['phone']}\n"
-            text += "\n"
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=master_main_kb())
-    await callback.answer()
-
-
 @router.callback_query(F.data == "m:bookings")
 async def cb_all_bookings(callback: CallbackQuery):
     if not await is_master(callback.from_user.id):
         return
     bookings = await get_master_bookings(callback.from_user.id)
     if not bookings:
-        await callback.message.edit_text(
-            "📆 Записей пока нет.", reply_markup=master_main_kb()
-        )
+        await callback.message.edit_text("📆 Записей пока нет.", reply_markup=master_close_kb())
     else:
         await callback.message.edit_text(
             "📆 <b>Все записи:</b>\n\nНажми на запись для управления:",
@@ -290,18 +383,6 @@ async def cb_cancel_booking_master(callback: CallbackQuery):
 
 # ─── STATS ────────────────────────────────────────────────────────────────────
 
-@router.callback_query(F.data == "m:stats")
-async def cb_stats(callback: CallbackQuery):
-    if not await is_master(callback.from_user.id):
-        return
-    await callback.message.edit_text(
-        "💰 <b>Статистика дохода</b>\n\nВыберите период:",
-        parse_mode="HTML",
-        reply_markup=stats_period_kb()
-    )
-    await callback.answer()
-
-
 @router.callback_query(F.data.startswith("m:stats:"))
 async def cb_stats_period(callback: CallbackQuery):
     if not await is_master(callback.from_user.id):
@@ -322,31 +403,13 @@ async def cb_stats_period(callback: CallbackQuery):
             f"📊 Средний чек: <b>{(income / total):.0f}₽</b>"
         )
     else:
-        text = (
-            f"💰 <b>Доход за {period_labels.get(period, period)}:</b>\n\n"
-            f"Пока нет выполненных записей."
-        )
+        text = f"💰 <b>Доход за {period_labels.get(period, period)}:</b>\n\nПока нет выполненных записей."
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=stats_period_kb())
     await callback.answer()
 
 
-# ─── SCHEDULE SETTINGS ────────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "m:schedule")
-async def cb_schedule_settings(callback: CallbackQuery, state: FSMContext):
-    if not await is_master(callback.from_user.id):
-        return
-    master = await get_master(callback.from_user.id)
-    await callback.message.edit_text(
-        f"⏰ <b>Настройки рабочего времени</b>\n\n"
-        f"Текущие: {master['work_start']} — {master['work_end']}, слот {master['slot_duration']} мин\n\n"
-        f"Введи начало рабочего дня (формат ЧЧ:ММ, например <code>09:00</code>):",
-        parse_mode="HTML"
-    )
-    await state.set_state(ScheduleStates.waiting_work_start)
-    await callback.answer()
-
+# ─── SCHEDULE SETTINGS (FSM) ──────────────────────────────────────────────────
 
 @router.message(ScheduleStates.waiting_work_start)
 async def process_work_start(message: Message, state: FSMContext):
@@ -397,27 +460,7 @@ async def process_slot_duration(message: Message, state: FSMContext):
         f"✅ Расписание обновлено!\n"
         f"Рабочий день: {data['work_start']} — {data['work_end']}\n"
         f"Длительность слота: {slot} мин",
-        master_main_kb(),
     )
-
-
-# ─── LINK ─────────────────────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "m:link")
-async def cb_master_link(callback: CallbackQuery):
-    if not await is_master(callback.from_user.id):
-        return
-    bot_info = await callback.bot.get_me()
-    link = f"https://t.me/{bot_info.username}?start=master_{callback.from_user.id}"
-    await callback.message.edit_text(
-        f"🔗 <b>Твоя ссылка для клиентов:</b>\n\n"
-        f"<code>{link}</code>\n\n"
-        f"Отправь эту ссылку своим клиентам. Перейдя по ней, они автоматически "
-        f"попадут в твой кабинет и смогут записаться.",
-        parse_mode="HTML",
-        reply_markup=master_main_kb()
-    )
-    await callback.answer()
 
 
 # ─── MY INFO PAGE ─────────────────────────────────────────────────────────────
@@ -437,17 +480,6 @@ def _info_display(master) -> str:
         f"📌 Координаты: {coords}\n\n"
         f"<i>Нажмите кнопку, чтобы изменить поле:</i>"
     )
-
-
-@router.callback_query(F.data == "m:my_info")
-async def cb_master_my_info(callback: CallbackQuery):
-    if not await is_master(callback.from_user.id):
-        return
-    master = await get_master(callback.from_user.id)
-    await callback.message.edit_text(
-        _info_display(master), parse_mode="HTML", reply_markup=master_info_kb()
-    )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("m:info:"))
@@ -547,9 +579,7 @@ async def cb_waitlist(callback: CallbackQuery):
         return
     waitlist = await get_waitlist(callback.from_user.id)
     if not waitlist:
-        await callback.message.edit_text(
-            "👥 Лист ожидания пуст.", reply_markup=master_main_kb()
-        )
+        await callback.message.edit_text("👥 Лист ожидания пуст.", reply_markup=master_close_kb())
     else:
         await callback.message.edit_text(
             "👥 <b>Лист ожидания</b>\n\nНажми на клиента, чтобы уведомить его:",

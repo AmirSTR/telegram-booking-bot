@@ -17,7 +17,7 @@ from keyboards.keyboards import (
     client_main_kb, services_client_kb, dates_kb, time_slots_kb,
     confirm_booking_kb, client_bookings_kb, confirm_cancel_kb, phone_kb,
     menu_reply_kb, profile_kb, about_master_kb, waitlist_dates_kb,
-    booking_success_kb, make_gcal_url,
+    booking_success_kb, make_gcal_url, master_main_kb,
 )
 from utils.states import (
     ClientRegisterStates, BookingStates, WaitlistDateStates, ProfileStates,
@@ -101,8 +101,6 @@ async def send_tracked(
 
 @router.message(CommandStart())
 async def client_start(message: Message, state: FSMContext):
-    from keyboards.keyboards import master_main_kb as _master_main_kb
-
     text = message.text or ""
     parts = text.split(maxsplit=1)
     raw_arg = parts[1] if len(parts) > 1 else ""
@@ -117,18 +115,18 @@ async def client_start(message: Message, state: FSMContext):
     sender_master = await get_master(message.from_user.id)
 
     if sender_master and not master_id:
-        await send_tracked(
-            message,
-            f"✂️ Привет, <b>{sender_master['name']}</b>!\n\nЭто твоя панель управления записями.",
-            _master_main_kb(),
+        await message.answer(
+            f"✂️ Привет, <b>{sender_master['name']}</b>!\n\nИспользуй кнопки ниже для управления:",
+            parse_mode="HTML",
+            reply_markup=master_main_kb(),
         )
         return
 
     if sender_master and master_id and sender_master["telegram_id"] == master_id:
-        await send_tracked(
-            message,
-            f"✂️ Привет, <b>{sender_master['name']}</b>!\n\nЭто твоя панель управления записями.",
-            _master_main_kb(),
+        await message.answer(
+            f"✂️ Привет, <b>{sender_master['name']}</b>!\n\nИспользуй кнопки ниже для управления:",
+            parse_mode="HTML",
+            reply_markup=master_main_kb(),
         )
         return
 

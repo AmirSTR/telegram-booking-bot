@@ -35,16 +35,21 @@ def masters_list_kb(masters: list, action: str = "remove") -> InlineKeyboardMark
 
 # ─── MASTER ───────────────────────────────────────────────────────────────────
 
-def master_main_kb() -> InlineKeyboardMarkup:
+def master_main_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💼 Услуги"),       KeyboardButton(text="📅 Сегодня")],
+            [KeyboardButton(text="📆 Записи"),        KeyboardButton(text="💰 Статистика")],
+            [KeyboardButton(text="⏰ Расписание"),    KeyboardButton(text="👥 Лист ожидания")],
+            [KeyboardButton(text="ℹ️ Моя страница"),  KeyboardButton(text="🔗 Ссылка")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def master_close_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💼 Мои услуги", callback_data="m:services")],
-        [InlineKeyboardButton(text="📅 Расписание на сегодня", callback_data="m:today")],
-        [InlineKeyboardButton(text="📆 Все записи", callback_data="m:bookings")],
-        [InlineKeyboardButton(text="💰 Статистика дохода", callback_data="m:stats")],
-        [InlineKeyboardButton(text="⏰ Настройки рабочего времени", callback_data="m:schedule")],
-        [InlineKeyboardButton(text="ℹ️ Моя страница для клиентов", callback_data="m:my_info")],
-        [InlineKeyboardButton(text="🔗 Моя ссылка для клиентов", callback_data="m:link")],
-        [InlineKeyboardButton(text="👥 Лист ожидания", callback_data="m:waitlist")],
+        [InlineKeyboardButton(text="✖️ Закрыть", callback_data="m:back")]
     ])
 
 
