@@ -10,7 +10,7 @@ from db.database import (
     update_master_info
 )
 from keyboards.keyboards import (
-    master_close_kb, services_kb, confirm_delete_service_kb,
+    master_close_kb, master_main_kb, services_kb, confirm_delete_service_kb,
     bookings_master_kb, booking_actions_master_kb, stats_period_kb,
     waitlist_kb, master_info_kb
 )
@@ -615,3 +615,19 @@ async def cb_notify_waitlist(callback: CallbackQuery):
     except Exception:
         await callback.answer("❌ Не удалось отправить сообщение клиенту", show_alert=True)
     await cb_waitlist(callback)
+
+
+# ─── FALLBACK — restore keyboard for masters ─────────────────────────────────
+
+@router.message()
+async def master_fallback(message: Message, state: FSMContext):
+    """Show the master keyboard to any master who somehow lost it."""
+    if not await is_master(message.from_user.id):
+        return
+    current = await state.get_state()
+    if current:
+        return
+    await message.answer(
+        "Используй кнопки меню ниже ⬇️",
+        reply_markup=master_main_kb(),
+    )

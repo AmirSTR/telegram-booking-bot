@@ -44,6 +44,7 @@ def master_main_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="ℹ️ Моя страница"),  KeyboardButton(text="🔗 Ссылка")],
         ],
         resize_keyboard=True,
+        is_persistent=True,
     )
 
 
