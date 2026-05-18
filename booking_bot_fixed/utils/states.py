@@ -45,6 +45,7 @@ class WaitlistDateStates(StatesGroup):
 
 
 class ProfileStates(StatesGroup):
+    editing_name = State()
     editing_phone = State()
     editing_email = State()
 

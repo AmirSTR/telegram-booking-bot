@@ -73,6 +73,15 @@ async def init_db():
                 data TEXT DEFAULT '{}',
                 PRIMARY KEY (bot_id, chat_id, user_id, destiny)
             );
+
+            CREATE TABLE IF NOT EXISTS bot_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_bot_messages_user ON bot_messages(user_id);
         """)
         await db.commit()
 
@@ -228,6 +237,15 @@ async def get_all_clients(admin_id: int):
             "SELECT * FROM clients WHERE admin_id = ? ORDER BY name", (admin_id,)
         ) as cur:
             return await cur.fetchall()
+
+
+async def update_client_name(admin_id: int, telegram_id: int, name: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE clients SET name=? WHERE admin_id=? AND telegram_id=?",
+            (name, admin_id, telegram_id)
+        )
+        await db.commit()
 
 
 async def update_client_phone(admin_id: int, telegram_id: int, phone: str):

@@ -285,13 +285,14 @@ def waitlist_dates_kb(dates: List[str], selected: List[str] = None) -> InlineKey
 def profile_kb(has_email: bool = False) -> InlineKeyboardMarkup:
     """Profile section keyboard (UX-4)."""
     buttons = [
+        [InlineKeyboardButton(text="✏️ Изменить имя", callback_data="c:edit_name")],
         [InlineKeyboardButton(text="✏️ Изменить телефон", callback_data="c:edit_phone")],
     ]
     if has_email:
         buttons.append([InlineKeyboardButton(text="✏️ Изменить email", callback_data="c:edit_email")])
     else:
         buttons.append([InlineKeyboardButton(text="✏️ Добавить email", callback_data="c:edit_email")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="c:back")])
+    buttons.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="c:back")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
