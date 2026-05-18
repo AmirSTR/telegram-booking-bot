@@ -37,7 +37,12 @@ class SQLiteStorage(BaseStorage):
 
     async def set_state(self, key: StorageKey, state: StateType = None) -> None:
         record = await self._get(key)
-        state_str = None if state is None else (state if isinstance(state, str) else str(state))
+        if state is None:
+            state_str = None
+        elif isinstance(state, str):
+            state_str = state
+        else:
+            state_str = state.state  # "ClassName:attr_name", not str() → "<State '...'>"
         await self._put(key, state_str, record["data"])
 
     async def get_state(self, key: StorageKey) -> Optional[str]:
